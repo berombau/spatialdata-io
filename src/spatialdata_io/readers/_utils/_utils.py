@@ -73,7 +73,7 @@ def _read_counts(
     return adata, library_id
 
 
-def add_ome_attr(path: Path) -> None:
+def add_ome_attr(path: Path, pixels_to_microns: dict | None = None) -> None:
     """Add OME metadata to Zarr store of SpatialData object."""
     path = Path(path)
     assert path.exists()
@@ -85,7 +85,7 @@ def add_ome_attr(path: Path) -> None:
     logger.debug(images)
     # write the image data
     for image in images:
-        name = image.stem
+        name = list(sdata.images.keys())[0]
         el = sdata.images[name]
         if "scale0" in el:
             el = el["scale0"]
@@ -119,21 +119,20 @@ def add_ome_attr(path: Path) -> None:
             }
             for i, c in enumerate(channel_names)
         ]
+        omero_dict = {
+            "channels": channel_dicts,
+            "rdefs": {
+                "defaultT": 0,  # First timepoint to show the user
+                "defaultZ": 0,  # First Z section to show the user
+                "model": "color",  # "color" or "greyscale"
+            },
+            "name": name,
+            "version": "0.4",
+        }
+        if pixels_to_microns:
+            omero_dict["pixel_size"] = pixels_to_microns
         root = zarr.open_group(image)
-        root.attrs.update(
-            {
-                "omero": {
-                    "channels": channel_dicts,
-                    "rdefs": {
-                        "defaultT": 0,  # First timepoint to show the user
-                        "defaultZ": 0,  # First Z section to show the user
-                        "model": "color",  # "color" or "greyscale"
-                    },
-                    "name": name,
-                    "version": "0.4",
-                }
-            }
-        )
+        root.attrs.update({"omero": omero_dict})
     zarr.consolidate_metadata(path)
 
 
