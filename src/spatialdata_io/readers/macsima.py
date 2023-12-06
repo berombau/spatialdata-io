@@ -38,6 +38,7 @@ def macsima(
     scale_factors: list[int] | None = None,
     write_ome = True,
     default_scale_factor: int = 2,
+    exposure_time: float | str = 'highest',
     output_path: Path | None = None,
 ) -> SpatialData:
     """
@@ -73,16 +74,25 @@ def macsima(
         Scale factors to use for downsampling. If None, scale factors are calculated based on image size.
     default_scale_factor
         Default scale factor to use for downsampling.
+    exposure_time
+        Exposure time to use for images with multiple exposure times. Can be 'highest' or a float.
+    output_path
+        Path to write the :class:`spatialdata.SpatialData` object to. If None, the object is not written.
 
     Returns
     -------
     :class:`spatialdata.SpatialData`
     """
     if '*' in str(path):
-        paths = expandpath(path)
+        paths = list(expandpath(path, filter_suffix=['.zarr']))
+        logger.info(f"Expanded path to: {paths}")
     else:
         path = Path(path)
         paths = [path] + [x for x in path.iterdir() if x.is_dir()]
+    # check all paths to make sure they exist
+    for p in paths:
+        if not p.exists():
+            logger.warning(f"Cannot find path: {p}")
     images = {p.stem: get_image(
         p,
         metadata=metadata,
@@ -96,10 +106,14 @@ def macsima(
         scale_factors=scale_factors,
         write_ome=write_ome,
         default_scale_factor=default_scale_factor,
+        exposure_time=exposure_time,
         coordinate_system=p.stem,
     ) for p in paths}
-    # filter out None values
-    images = {k: v for k, v in images.items() if v is not None}
+    # filter out None values and raise warning
+    for k, v in images.copy().items():
+        if v is None:
+            logger.warning(f"Removing {k} as it is None")
+            images.pop(k)
     sdata = sd.SpatialData(images=images, table=None)
     if output_path is not None:
         sdata.write(output_path, overwrite=True)
@@ -118,6 +132,7 @@ def get_image(
     transformations: bool = None,
     scale_factors: list[int] | None = None,
     write_ome = True,
+    exposure_time: float | str = 'highest',
     default_scale_factor: int = 2,
     coordinate_system: str = "global",
 ):
@@ -202,21 +217,25 @@ def get_image(
                 channels = [p.stem.split('C-')[-1].split('_')[1] for p in path_files]
             round_channels = [f"{r} {c}" for r, c in zip(rounds, channels)]
             stack, sorted_channels = get_stack(path_files, round_channels, imread_kwargs)
-            # if any channel names are the same, take only the channel occuring last of the duplicates, as they are grouped together
+            # if any channel names are the same, presume multiple exposure time
             if len(sorted_channels) != len(set(sorted_channels)):
-                logger.info(sorted_channels)
-                # go through the channels and stack in reverse order and only output the first occurence of each unique channel
-                duplicate_sorted_channels = sorted_channels
-                sorted_channels = []
-                stack_index = []
-                for i, c in enumerate(duplicate_sorted_channels[::-1]):
-                    if c not in sorted_channels:
-                        stack_index.append(len(duplicate_sorted_channels) - i - 1)
-                        sorted_channels.append(c)
-                logger.info(sorted_channels)
-                # reverse again to get correct order
-                sorted_channels = sorted_channels[::-1]
-                stack = stack[stack_index[::-1], :, :]
+                if exposure_time == 'highest':
+                    # use last exposure time
+                    logger.debug(sorted_channels)
+                    # go through the channels and stack in reverse order and only output the first occurence of each unique channel
+                    duplicate_sorted_channels = sorted_channels
+                    sorted_channels = []
+                    stack_index = []
+                    for i, c in enumerate(duplicate_sorted_channels[::-1]):
+                        if c not in sorted_channels:
+                            stack_index.append(len(duplicate_sorted_channels) - i - 1)
+                            sorted_channels.append(c)
+                    logger.debug(sorted_channels)
+                    # reverse again to get correct order
+                    sorted_channels = sorted_channels[::-1]
+                    stack = stack[stack_index[::-1], :, :]
+                else:
+                    raise NotImplementedError(f"Exposure time {exposure_time} not implemented")
 
     
     # do subsetting if needed
@@ -270,10 +289,15 @@ def get_stack(path_files: list[Path], round_channels: list[str], imread_kwargs: 
     stack = da.stack(imgs).squeeze()
     return stack, sorted_channels
 
-def expandpath(path_pattern) -> Iterable[Path]:
+def expandpath(path_pattern, filter_suffix=None, only_dir=True) -> Iterable[Path]:
     p = Path(path_pattern).expanduser()
     parts = p.parts[p.is_absolute():]
-    return Path(p.root).glob(str(Path(*parts)))
+    output = Path(p.root).glob(str(Path(*parts)))
+    if only_dir:
+        output = [p for p in output if p.is_dir()]
+    if filter_suffix:
+        output = [p for p in output if p.suffix not in filter_suffix]
+    return output
 
 def natural_sort(l): 
     # Could also use natsort package
