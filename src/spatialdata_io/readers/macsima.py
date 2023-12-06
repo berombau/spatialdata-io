@@ -96,6 +96,7 @@ def macsima(
         scale_factors=scale_factors,
         write_ome=write_ome,
         default_scale_factor=default_scale_factor,
+        coordinate_system=p.stem,
     ) for p in paths}
     # filter out None values
     images = {k: v for k, v in images.items() if v is not None}
@@ -118,6 +119,7 @@ def get_image(
     scale_factors: list[int] | None = None,
     write_ome = True,
     default_scale_factor: int = 2,
+    coordinate_system: str = "global",
 ):
     path = Path(path)
     if transformations is None:
@@ -236,8 +238,7 @@ def get_image(
         # 'microns' is also used in merscope example
         # no inverse needed as the transformation is already from pixels to microns
         t_dict = {
-            "global": sd.transformations.Identity(),
-            "microns": t_pixels_to_microns,
+            coordinate_system: t_pixels_to_microns,
         }
     # # chunk_size can be 1 for channels
     chunks = {
